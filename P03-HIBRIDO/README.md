@@ -14,7 +14,7 @@
   <img src="https://img.shields.io/badge/PyCryptodome-3.20%2B-2C2D72?style=for-the-badge&logo=python&logoColor=white" alt="PyCryptodome"/>
   <img src="https://img.shields.io/badge/Cifrado-AES--256--CBC-00C853?style=for-the-badge&logo=gnuprivacyguard&logoColor=white" alt="AES-256"/>
   <img src="https://img.shields.io/badge/Clave-RSA--2048-FF6F00?style=for-the-badge&logo=letsencrypt&logoColor=white" alt="RSA-2048"/>
-  <img src="https://img.shields.io/badge/Licencia-Académico-blue?style=for-the-badge" alt="Académico"/>
+  <img src="https://img.shields.io/badge/Pruebas-4%2F4-success?style=for-the-badge" alt="Pruebas 4 de 4"/>
 </p>
 
 ---
@@ -78,8 +78,8 @@ Este proyecto implementa un **sistema de cifrado híbrido** que combina lo mejor
 ### 1️⃣ Clonar o descargar el proyecto
 
 ```bash
-git clone <url-del-repositorio>
-cd "Practica 03_Algoritmo Hibrido"
+git clone https://github.com/KevinUac/SeguridadInformatica.git
+cd SeguridadInformatica/P03-HIBRIDO
 ```
 
 O simplemente descarga y descomprime la carpeta del proyecto.
@@ -110,11 +110,13 @@ python hibrido_rsa_aes.py
 ## 📂 Estructura del proyecto
 
 ```
-Practica 03_Algoritmo Hibrido/
+P03-HIBRIDO/
 │
-├── 🐍 hibrido_rsa_aes.py     # Script principal con toda la lógica
-├── 📦 requirements.txt        # Dependencia (pycryptodome)
-└── 📖 README.md               # Este archivo
+├── 🐍 hibrido_rsa_aes.py      # Script principal con toda la lógica
+├── 📦 requirements.txt         # Dependencia (pycryptodome)
+├── 📄 INSTRUCTIONS.MD          # Enunciado de la práctica
+├── 🖼️ capturas/                # Evidencias de la ejecución
+└── 📖 README.md                # Este archivo
 ```
 
 ---
@@ -160,6 +162,22 @@ cifrado = Cifrado_AES_enviar_mensaje("Hola mundo", iv)
 
 ---
 
+## 🧠 Justificación de las decisiones de diseño
+
+| Decisión | Por qué la tomé |
+|----------|-----------------|
+| **Clave AES de 32 bytes** | Son los 32 bytes que pide la práctica y equivalen a **AES-256**, el tamaño más fuerte del estándar. |
+| **Modo CBC** | Es el que se pide en el enunciado. Encadena los bloques, así que dos bloques de texto plano iguales no producen el mismo bloque cifrado (a diferencia de ECB). |
+| **IV de 32 bytes** | El enunciado pide 32, aunque AES trabaja con bloques de 16. Genero los 32 completos y **uso los primeros 16** para el CBC; los otros 16 igual viajan protegidos dentro del paquete RSA, así que no se pierde nada ni se incumple la especificación. |
+| **IV + clave en un solo paquete RSA** | La especificación permite "empaquetarlo junto con la clave cifrada". Pego los 64 bytes y hago **una sola** operación RSA: menos código y menos cosas que se puedan desincronizar. RSA-2048 con OAEP admite hasta 190 bytes, así que caben de sobra. |
+| **RSA de 2048 bits** | Es el mínimo que hoy se considera seguro (recomendación del NIST). Con menos no tendría sentido presentarlo. |
+| **Relleno OAEP en RSA** | Le mete aleatoriedad al cifrado asimétrico. Sin él, RSA "de libro" es determinista y filtra información. |
+| **Relleno PKCS#7 en AES** | CBC necesita que el mensaje mida un múltiplo de 16 bytes. PKCS#7 completa el último bloque y se puede quitar sin ambigüedad al descifrar. |
+| **`get_random_bytes()` y no `random`** | `random` es un generador pseudoaleatorio predecible; `get_random_bytes()` usa el generador criptográfico del sistema operativo. |
+| **Clave e IV nuevos en cada envío** | Así dos mensajes idénticos nunca producen el mismo criptograma (se demuestra en la Prueba 2). |
+
+---
+
 ## 🧪 Pruebas incluidas
 
 El programa ejecuta **4 pruebas automáticas** para verificar que todo funciona correctamente:
@@ -171,7 +189,24 @@ El programa ejecuta **4 pruebas automáticas** para verificar que todo funciona 
 | 3 | 💥 **Integridad** | Un byte alterado en el cifrado rompe el descifrado |
 | 4 | 🚫 **Clave incorrecta** | Otra clave privada no puede descifrar el mensaje |
 
-### Ejemplo de salida esperada:
+---
+
+## 🖼️ Evidencia de la ejecución
+
+**Captura 1.** Generación del par de claves RSA-2048 del receptor, preparación del envío con
+`get_Msj_And_Key()`, lo que realmente viaja por el canal en hexadecimal, descifrado por parte del
+receptor con `decifrar_mensaje()`, prueba suelta de la función auxiliar y comprobación final de que
+el mensaje recuperado es idéntico al original.
+
+![Cifrado y descifrado del mensaje](capturas/01-cifrado-y-descifrado.png)
+
+**Captura 2.** Batería de pruebas de funcionamiento. Se ven las cuatro pruebas pasando y el resumen
+final: **4 de 4 correctas**. En la Prueba 2 se aprecia que el mismo mensaje enviado dos veces
+produce criptogramas totalmente distintos.
+
+![Pruebas de funcionamiento](capturas/02-pruebas-de-funcionamiento.png)
+
+### Resumen de la corrida
 
 ```
 ----------------------------------------------------------------------
@@ -187,6 +222,38 @@ El programa ejecuta **4 pruebas automáticas** para verificar que todo funciona 
  RESULTADO GENERAL: TODO CORRECTO
 ======================================================================
 ```
+
+> Los valores hexadecimales cambian en cada ejecución porque la clave AES, el IV y el par RSA se
+> generan de nuevo cada vez. Lo que **no** cambia es el resultado: el mensaje siempre se recupera
+> completo y las cuatro pruebas siempre pasan.
+
+---
+
+## 🛡️ Análisis de seguridad
+
+### Lo que el sistema sí protege
+
+- **Confidencialidad del mensaje.** Quien intercepte el canal solo ve dos bloques de bytes sin
+  sentido. Para leerlos tendría que romper AES-256 o factorizar un módulo RSA de 2048 bits.
+- **Confidencialidad de la clave.** La clave AES nunca viaja en claro: sale protegida con la clave
+  pública del receptor y solo su clave privada la puede abrir (**Prueba 4**).
+- **No determinismo.** Cada envío usa clave e IV nuevos, y RSA va con OAEP. El mismo texto enviado
+  dos veces da criptogramas distintos, así que un atacante no puede saber si repetí un mensaje
+  (**Prueba 2**).
+- **Aleatoriedad fuerte.** Las claves y el IV salen del generador criptográfico del sistema
+  operativo, no de `random`.
+
+### Limitaciones que reconozco
+
+| Limitación | Explicación | Cómo se resolvería |
+|------------|-------------|--------------------|
+| **No hay autenticación del mensaje** | CBC da confidencialidad, no integridad. Si alguien altera bytes, el descifrado devuelve basura o truena, pero el sistema no *detecta formalmente* la manipulación. En la Prueba 3 se ve que el mensaje se daña, y eso es una consecuencia, no una verificación. | Usar **AES-GCM**, o añadir un **HMAC-SHA256** sobre el criptograma (esquema *encrypt-then-MAC*). |
+| **No hay autenticación del emisor** | Cualquiera que tenga la clave pública del receptor puede mandarle un mensaje haciéndose pasar por otro. | **Firma digital** del emisor con RSA-PSS sobre el mensaje. |
+| **Sin protección contra repetición** | Un atacante podría reenviar tal cual un envío antiguo. | Incluir marca de tiempo o número de secuencia dentro del texto cifrado. |
+| **Las claves solo viven en memoria** | El par RSA se genera al arrancar y se pierde al cerrar; no hay almacén de claves ni PKI. | Guardar las claves en formato PEM protegidas con contraseña y validarlas con certificados. |
+
+> En resumen: como demostración del **esquema híbrido** cumple bien y resiste los ataques que se
+> probaron, pero para un sistema real le faltaría la parte de **integridad y autenticación**.
 
 ---
 
