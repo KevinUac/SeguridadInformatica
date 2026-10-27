@@ -1,6 +1,0 @@
-http://localhost:3000
-Query ejecutada: SELECT * FROM users WHERE username = 'admin' AND password = 'admin'
-Query ejecutada: SELECT * FROM users WHERE username = 'juan' AND password = '1234'
-Query ejecutada: SELECT * FROM users WHERE username = 'admin' AND password = 'incorrecta'
-Query ejecutada: SELECT * FROM users WHERE username = 'admin' --' AND password = 'loquesea'
-Query ejecutada: SELECT * FROM users WHERE username = '' OR '1'='1' --' AND password = 'loquesea'

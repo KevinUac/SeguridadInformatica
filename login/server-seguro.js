@@ -1,22 +1,32 @@
-
-// Login - version segura (corrige la inyeccion SQL del server-vulnerable.js)
-// Aqui ya NO concateno la entrada en el query. Uso consultas preparadas con ?
-// para que lo que escribe el usuario se trate como dato y no como codigo SQL.
-//
-// npm install express sqlite3
-// node server-seguro.js   ->  http://localhost:3001
+/**
+ * Login — versión SEGURA
+ * -----------------------------------------------------------------------------
+ * Corrige la inyección SQL de `server-vulnerable.js`.
+ *
+ * La causa de la vulnerabilidad era construir la consulta CONCATENANDO la
+ * entrada del usuario dentro del texto SQL. Aquí ya no concateno: uso
+ * CONSULTAS PREPARADAS (parametrizadas). La plantilla del SQL viaja con
+ * marcadores `?` y los valores se mandan por separado, de modo que lo que
+ * escribe el usuario se trata SIEMPRE como dato, nunca como código SQL.
+ *
+ * Ejecutar:
+ *   npm install
+ *   node server-seguro.js        ->  http://localhost:3001
+ *
+ * Práctica: 2do Parcial · Login SQL injection · Seguridad Informática · UACAM
+ */
 
 const express = require("express");
 const sqlite3 = require("sqlite3").verbose();
-const path = require("path");
 
 const app = express();
 app.use(express.json());
-app.use(express.static(__dirname));
+app.use(express.static(__dirname)); // sirve index.html / index-seguro.html
 
+// ---------------------------------------------------------------------------
+// Base de datos de prueba (en memoria), idéntica a la del servidor vulnerable.
+// ---------------------------------------------------------------------------
 const db = new sqlite3.Database(":memory:");
-
-// Misma base de datos de prueba que el server vulnerable
 db.serialize(() => {
   db.run(
     "CREATE TABLE users (id INTEGER PRIMARY KEY, username TEXT, password TEXT)",
@@ -25,18 +35,35 @@ db.serialize(() => {
   db.run("INSERT INTO users (username, password) VALUES ('juan', '1234')");
 });
 
+// ---------------------------------------------------------------------------
+// Endpoint de login seguro
+// ---------------------------------------------------------------------------
 app.post("/login-seguro", (req, res) => {
   const { username, password } = req.body;
 
-  // Los ? son los placeholders. El usuario y el password se mandan aparte
-  // en el arreglo, asi una comilla o un -- ya no rompen la consulta.
+  // Validación mínima: exijo que ambos campos existan y sean texto.
+  if (typeof username !== "string" || typeof password !== "string") {
+    return res.status(400).json({ ok: false, message: "Petición inválida" });
+  }
+  const u = username.trim();
+  const p = password.trim();
+  if (u.length === 0 || u.length > 64 || p.length === 0 || p.length > 64) {
+    return res.status(400).json({ ok: false, message: "Usuario o contraseña con longitud inválida" });
+  }
+
+  // CORRECCIÓN: la plantilla SQL es FIJA y usa marcadores (?). El motor
+  // compila primero la consulta y después inserta los valores como datos,
+  // así una comilla ' o un -- en la entrada ya no cambian la consulta.
   const query = "SELECT * FROM users WHERE username = ? AND password = ?";
 
   console.log("Query preparada:", query);
-  console.log("Parametros     :", [username, password]);
+  console.log("Parametros     :", [u, p]);
 
-  db.get(query, [username, password], (err, row) => {
-    if (err) return res.status(500).json({ error: err.message });
+  db.get(query, [u, p], (err, row) => {
+    if (err) {
+      console.error("Error interno:", err.message);
+      return res.status(500).json({ ok: false, message: "Error interno del servidor" });
+    }
     if (row) return res.json({ ok: true, user: row.username });
     res.status(401).json({ ok: false, message: "Credenciales inválidas" });
   });

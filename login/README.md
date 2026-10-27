@@ -10,6 +10,7 @@
   <img src="https://img.shields.io/badge/Express-5.x-000000?style=for-the-badge&logo=express&logoColor=white" alt="Express"/>
   <img src="https://img.shields.io/badge/SQLite-en%20memoria-003B57?style=for-the-badge&logo=sqlite&logoColor=white" alt="SQLite"/>
   <img src="https://img.shields.io/badge/OWASP-A03%3A2021%20Injection-CA2A30?style=for-the-badge" alt="OWASP A03 Injection"/>
+  <img src="https://img.shields.io/badge/Payloads-5-6B1426?style=for-the-badge" alt="5 payloads"/>
   <img src="https://img.shields.io/badge/Estado-Completa-success?style=for-the-badge" alt="Completa"/>
 </p>
 
@@ -17,14 +18,15 @@
 
 ## 📌 De qué trata la práctica
 
-Analizo una app de **login** en **Node.js + Express** (con **SQLite en memoria**) que el profesor nos pasó.
-El endpoint `/login-vulnerable` arma su consulta **concatenando** directamente lo que escribe el usuario,
-lo que abre la puerta a **inyección SQL**. En esta práctica:
+Analizo una app de **login** en **Node.js + Express** (con **SQLite en memoria**) que el profesor nos
+pasó. El endpoint `/login-vulnerable` arma su consulta **concatenando** directamente lo que escribe el
+usuario, lo que abre la puerta a **inyección SQL**. En esta práctica:
 
-1. **Demuestro los payloads que funcionan** y entro al login sin credenciales válidas.
+1. **Demuestro cinco payloads que funcionan**, cubriendo distintas técnicas: comentario, tautología OR,
+   inyección en el campo contraseña, `UNION SELECT` y fuga de información por mensaje de error.
 2. **Explico por qué funcionan**, a nivel de la consulta SQL.
-3. **Corrijo la vulnerabilidad** con **consultas parametrizadas** (`server-seguro.js`).
-4. **Verifico** que el login legítimo sigue vivo y que los ataques quedan bloqueados.
+3. **Corrijo la vulnerabilidad** con **consultas parametrizadas** + validación de entrada (`server-seguro.js`).
+4. **Verifico** que el login legítimo sigue vivo y que los cinco ataques quedan bloqueados.
 5. Dejo preparado el **Pull Request** de la versión segura.
 
 > ⚠️ **Entorno autorizado de laboratorio.** Todo corre en mi propia máquina (`localhost`), contra una app
@@ -37,11 +39,13 @@ lo que abre la puerta a **inyección SQL**. En esta práctica:
 ```
 login/
 ├── server-vulnerable.js     # App original (vulnerable a SQLi) — puerto 3000
-├── server-seguro.js         # App corregida (consultas parametrizadas) — puerto 3001
-├── index.html               # Formulario de login (cliente)
+├── server-seguro.js         # App corregida (parametrización + validación) — puerto 3001
+├── index.html               # Formulario de login contra el endpoint vulnerable (:3000)
+├── index-seguro.html        # Formulario de login contra el endpoint seguro (:3001)
 ├── package.json             # Dependencias: express, sqlite3
-├── Reporte_Login_SQLi_Kevin_Gonzalez.docx   # Reporte técnico completo
-└── evidencias/              # Capturas y logs reales de todo el proceso
+├── probar-login.ps1         # Script para reproducir las pruebas (normal + payloads)
+├── figuras/                 # Diagramas (anatomía de la inyección, concepto, corrección)
+└── evidencias/              # Capturas reales del proceso (navegador + terminal)
 ```
 
 ---
@@ -52,10 +56,10 @@ login/
 # 1) Instalar dependencias (una sola vez)
 npm install
 
-# 2a) Versión VULNERABLE  ->  http://localhost:3000
+# 2a) Versión VULNERABLE  ->  abre http://localhost:3000
 node server-vulnerable.js
 
-# 2b) Versión SEGURA      ->  http://localhost:3001
+# 2b) Versión SEGURA      ->  abre http://localhost:3001/index-seguro.html
 node server-seguro.js
 ```
 
@@ -72,37 +76,42 @@ const query =
   `SELECT * FROM users WHERE username = '${username}' AND password = '${password}'`;
 ```
 
-El problema: la base de datos **no distingue** entre el código que escribió el programador y lo que escribo
-yo en el formulario. Si mi entrada trae símbolos de SQL (una comilla `'` o un guion doble `--`), dejo de ser
-*un dato* y me convierto en *parte del código* de la consulta.
+La base de datos **no distingue** entre el código que escribió el programador y lo que escribo yo en el
+formulario. Si mi entrada trae símbolos de SQL (una comilla `'`, un guion doble `--` o la palabra
+`UNION`), dejo de ser *un dato* y me convierto en *parte del código* de la consulta. Además, el endpoint
+regresa el **mensaje de error crudo** del motor SQL (`err.message`) si la consulta queda mal formada —
+eso también es explotable, como muestro en el payload 5.
 
 <p align="center">
-  <img src="evidencias/01_concepto_dato_vs_codigo.png" width="100%" alt="Dato vs código"/>
+  <img src="figuras/01_concepto_dato_vs_codigo.png" width="95%" alt="Dato vs código"/>
 </p>
 
 ---
 
 ## 💥 Payloads que funcionan
 
-Los escribí en el campo **Usuario**, dejando la contraseña con cualquier valor:
+| # | Payload | Campo | Efecto | SQL que se ejecuta (resumido) |
+|---|---|---|---|---|
+| 1 | `admin' --` | Usuario | Entra como **admin** sin su contraseña | `...username = 'admin' --' AND password = ...` |
+| 2 | `' OR '1'='1' --` | Usuario | **Bypass total** (primera fila: admin) | `...username = '' OR '1'='1' --' AND ...` |
+| 3 | `x' OR '1'='1' --` | **Contraseña** (con usuario `juan`) | Bypass también inyectando por la contraseña | `...username='juan' AND password='x' OR '1'='1' --'` |
+| 4 | `' UNION SELECT 1,'hacker','x' --` | Usuario | **Fabrica** una sesión para un usuario que no existe en la BD | `...username='' UNION SELECT 1,'hacker','x' --'...` |
+| 5 | `admin'` (comilla suelta) | Usuario | La consulta queda mal formada y el servidor **expone el error SQL crudo** al cliente | `...username='admin''...` → `SQLITE_ERROR: unrecognized token` |
 
-| Payload (campo Usuario) | Efecto | SQL que se ejecuta |
-|---|---|---|
-| `admin' --` | Entra como **admin** sin su contraseña | `... username = 'admin' --' AND password = ...` |
-| `' OR '1'='1' --` | **Bypass total** (devuelve la primera cuenta: admin) | `... username = '' OR '1'='1' --' AND ...` |
-
-Ambos devuelven `{"ok":true,"user":"admin"}`:
+Los dos primeros los probé en el campo **Usuario** con cualquier contraseña; el payload 3 muestra que el
+campo **Contraseña** es igual de vulnerable; el 4 demuestra que no hace falta una cuenta real para entrar
+(se puede *fabricar* una fila completa); el 5 no entra al sistema, pero filtra información interna que un
+atacante usaría para afinar el resto de los ataques.
 
 <p align="center">
-  <img src="evidencias/03_explotacion_payloads.png" width="100%" alt="Explotación con los dos payloads"/>
+  <img src="evidencias/02_payload_admin.png" width="80%" alt="Payload admin' -- en el navegador"/>
 </p>
 
 La prueba más clara está en la **consola del servidor** (gracias al `console.log` del query): se ve el SQL
-real con mi entrada ya incrustada. Las dos últimas líneas son las inyecciones; en gris tachado está la parte
-que el `--` comenta:
+real con mi entrada ya incrustada.
 
 <p align="center">
-  <img src="evidencias/04_log_servidor_vulnerable.png" width="100%" alt="Log del servidor vulnerable"/>
+  <img src="evidencias/04_log_vulnerable.png" width="95%" alt="Log del servidor vulnerable"/>
 </p>
 
 ---
@@ -128,30 +137,57 @@ que el `--` comenta:
 </table>
 
 <p align="center">
-  <img src="evidencias/05_anatomia_admin.png" width="49%" alt="Anatomía admin' --"/>
-  <img src="evidencias/06_anatomia_or.png" width="49%" alt="Anatomía ' OR '1'='1' --"/>
+  <img src="figuras/02_anatomia_admin.png" width="49%" alt="Anatomía admin' --"/>
+  <img src="figuras/03_anatomia_or.png" width="49%" alt="Anatomía ' OR '1'='1' --"/>
 </p>
+
+**Los otros tres, mismo origen, distinta forma:**
+
+- **Contraseña (`x' OR '1'='1' --`):** la concatenación ocurre en los *dos* huecos de la consulta, no solo
+  en el usuario. Si el campo contraseña también se pega sin filtrar, la misma tautología funciona ahí.
+- **`UNION SELECT 1,'hacker','x' --`:** `UNION` pega el resultado de una segunda consulta a la primera.
+  Como la tabla `users` tiene tres columnas (`id, username, password`), armo un `SELECT` con tres valores
+  inventados; la app recibe una fila que **nunca existió** en la base y responde como si fuera real.
+- **Comilla suelta (`admin'`):** deja la consulta con comillas desbalanceadas → error de sintaxis en
+  SQLite. El endpoint hace `res.status(500).json({ error: err.message })`, así que ese error —que
+  revela el motor de base de datos y parte de la consulta— llega directo al navegador del atacante.
 
 > 📎 En SQLite (y en SQL estándar) el `--` marca un comentario de línea, por eso basta para anular el resto
 > de la consulta. El defecto está en la **concatenación**, no en la base de datos.
 
 ---
 
-## ✅ La corrección: parametrización
+## ✅ La corrección: parametrización + validación
 
-En `server-seguro.js` el endpoint `/login-seguro` usa **consultas preparadas** con marcadores `?`:
+En `server-seguro.js` el endpoint `/login-seguro` usa **consultas preparadas** con marcadores `?`, más una
+validación de entrada y un manejo de errores que no expone detalles internos:
 
 ```js
+// Validación: tipo y longitud antes de tocar la base de datos
+if (typeof username !== "string" || typeof password !== "string") { ... }
+const u = username.trim();
+const p = password.trim();
+if (u.length === 0 || u.length > 64 || p.length === 0 || p.length > 64) { ... }
+
+// CORRECCIÓN: la plantilla SQL es FIJA y usa marcadores (?)
 const query = "SELECT * FROM users WHERE username = ? AND password = ?";
-db.get(query, [username, password], (err, row) => { /* ... */ });
+db.get(query, [u, p], (err, row) => {
+  if (err) {
+    console.error("Error interno:", err.message); // solo se loguea, NO se expone al cliente
+    return res.status(500).json({ ok: false, message: "Error interno del servidor" });
+  }
+  /* ... */
+});
 ```
 
 El driver envía la **plantilla SQL** y los **valores** por canales separados: el motor compila primero la
-consulta y luego mete los valores como **datos**, nunca como código. Así, una comilla en mi entrada se guarda
-como el carácter comilla y ya no rompe nada.
+consulta y luego mete los valores como **datos**, nunca como código. Así, una comilla, un `--` o la
+palabra `UNION` en mi entrada se guardan como texto literal y ya no rompen nada — y de paso, como la
+consulta ya no puede fallar por un payload malformado, **tampoco hay mensaje de error que filtrar**: el
+payload 5 también queda neutralizado, no por la validación, sino por la misma parametrización.
 
 <p align="center">
-  <img src="evidencias/07_correccion_codigo.png" width="100%" alt="Antes vs después del código"/>
+  <img src="figuras/04_correccion_parametrizacion.png" width="95%" alt="Antes vs después del código"/>
 </p>
 
 ### Verificación
@@ -160,60 +196,79 @@ como el carácter comilla y ya no rompe nada.
 |---|---|---|
 | `admin` / `admin` | ✅ entra | ✅ entra |
 | `juan` / `1234` | ✅ entra | ✅ entra |
-| `admin` / `incorrecta` | ⛔ rechaza | ⛔ rechaza |
-| `admin' --` | 🔴 **entra (vulnerable)** | 🟢 **bloqueado** |
-| `' OR '1'='1' --` | 🔴 **entra (vulnerable)** | 🟢 **bloqueado** |
+| `admin' --` (usuario) | 🔴 **entra (vulnerable)** | 🟢 **bloqueado** |
+| `' OR '1'='1' --` (usuario) | 🔴 **entra (vulnerable)** | 🟢 **bloqueado** |
+| `x' OR '1'='1' --` (contraseña) | 🔴 **entra (vulnerable)** | 🟢 **bloqueado** |
+| `' UNION SELECT 1,'hacker','x' --` | 🔴 **entra como "hacker" (vulnerable)** | 🟢 **bloqueado** |
+| `admin'` (comilla suelta) | 🔴 **filtra el error SQL** | 🟢 **sin fuga — responde "Credenciales inválidas"** |
 
 <p align="center">
-  <img src="evidencias/08_pruebas_servidor_seguro.png" width="100%" alt="Pruebas sobre el servidor seguro"/>
+  <img src="evidencias/06_payload_bloqueado.png" width="80%" alt="Payload bloqueado en el servidor seguro"/>
 </p>
 
-El log del servidor seguro confirma el porqué: la plantilla `username = ? AND password = ?` **nunca cambia**,
-y el payload `admin' --` viaja como **parámetro** (dato). SQLite busca un usuario llamado literalmente
-`admin' --`, no lo encuentra, y no devuelve nada:
+El log del servidor seguro confirma el porqué: la plantilla `username = ? AND password = ?` **nunca
+cambia**, y cada payload viaja como **parámetro** (dato), sin importar si trae comillas, `--` o `UNION`:
 
 <p align="center">
-  <img src="evidencias/09_log_servidor_seguro.png" width="100%" alt="Log del servidor seguro"/>
+  <img src="evidencias/07_log_seguro.png" width="95%" alt="Log del servidor seguro"/>
 </p>
 
 ---
 
 ## 🔀 Pull Request de la versión segura
 
-La versión corregida se entrega como Pull Request desde la rama `72963_Gonzalez_Login_SQLi`:
+Mi trabajo de la materia vive en mi fork `KevinUac/SeguridadInformatica`, en la rama **`72963_Gonzalez`**
+— ahí está `server-seguro.js` junto con el resto de mis prácticas. El Pull Request se abre desde esa rama
+hacia `sanp-uacam/SeguridadInformatica:main`, con el mismo formato que usan mis compañeros de grupo
+(`72963_Gonzalez Login SQL injection`).
 
 <p align="center">
-  <img src="evidencias/10_pull_request_local.png" width="100%" alt="Pull Request local"/>
+  <img src="evidencias/09_github_rama.png" width="95%" alt="Rama 72963_Gonzalez en GitHub, lista para el PR"/>
 </p>
 
 ---
 
 ## 🖼️ Evidencias
 
-Todas las capturas y los logs reales del proceso están en [`evidencias/`](evidencias):
+Las capturas reales del proceso están en [`evidencias/`](evidencias):
 
 | Archivo | Qué muestra |
 |---|---|
-| `01_concepto_dato_vs_codigo.png` | Dato vs. código: la idea de fondo de la inyección |
-| `02_login_normal.png` | Login legítimo funcionando (línea base) |
-| `03_explotacion_payloads.png` | Los dos payloads entrando sin contraseña |
-| `04_log_servidor_vulnerable.png` | SQL real reescrito por cada inyección |
-| `05_anatomia_admin.png` / `06_anatomia_or.png` | Desglose pieza por pieza de cada payload |
-| `07_correccion_codigo.png` | Código antes (concatenar) vs. después (parametrizar) |
-| `08_pruebas_servidor_seguro.png` | Login legítimo OK + payloads bloqueados |
-| `09_log_servidor_seguro.png` | Plantilla fija + payload como parámetro |
-| `10_pull_request_local.png` | Evidencia del Pull Request |
-| `log_servidor_vulnerable.txt` / `log_servidor_seguro.txt` | Logs crudos de ambos servidores |
+| `01_login_normal.png` | Login legítimo `admin/admin` en el navegador (línea base) |
+| `02_payload_admin.png` | Payload `admin' --` entrando como admin sin contraseña |
+| `03_payload_or.png` | Payload `' OR '1'='1' --` (bypass total) |
+| `04_log_vulnerable.png` | Consola del servidor vulnerable: el SQL real reescrito (payloads 1 y 2) |
+| `05_login_seguro_ok.png` | Login legítimo funcionando en el servidor seguro |
+| `06_payload_bloqueado.png` | El payload `admin' --` ahora da "Credenciales inválidas" |
+| `07_log_seguro.png` | Consola del servidor seguro: plantilla fija + parámetros (payloads 1 y 2) |
+| `08_codigo_seguro.png` | El código corregido (consulta parametrizada) |
+| `09_github_rama.png` | Rama `72963_Gonzalez` en GitHub, lista para el Pull Request |
+| `10_payload_password.png` | Payload 3 — inyección por el campo **contraseña** (vulnerable) |
+| `11_payload_union.png` | Payload 4 — `UNION SELECT` fabricando el usuario "hacker" (vulnerable) |
+| `12_payload_error.png` | Payload 5 — fuga del mensaje de error SQL crudo (vulnerable) |
+| `13_log_vulnerable_extra.png` | Consola vulnerable: SQL de los payloads 3, 4 y 5 |
+| `14_payload_password_bloqueado.png` | Payload 3 bloqueado en el servidor seguro |
+| `15_payload_union_bloqueado.png` | Payload 4 bloqueado en el servidor seguro |
+| `16_payload_error_bloqueado.png` | Payload 5 ya no filtra error — responde "Credenciales inválidas" |
+| `17_log_seguro_extra.png` | Consola segura: parámetros de los payloads 3, 4 y 5 |
+
+Los diagramas explicativos están en [`figuras/`](figuras).
 
 ---
 
 ## 🧾 Conclusión
 
-La inyección SQL no es magia: es aprovechar que la app arma su consulta **pegando mi texto**. Con `admin' --`
-cerré la cadena y comenté el chequeo de la contraseña; con `' OR '1'='1' --` hice que el `WHERE` fuera siempre
-verdadero. En ambos casos entré como **administrador** sin ninguna credencial válida. La solución no estaba en
-la base de datos ni en el framework, sino en **cómo se construye la consulta**: al parametrizar, la entrada del
-usuario deja de interpretarse como código y los mismos ataques quedan neutralizados, sin romper el login real.
+La inyección SQL no es magia: es aprovechar que la app arma su consulta **pegando mi texto**. Documenté
+cinco formas distintas de explotar la misma falla —comentario, tautología OR (en usuario y en
+contraseña), `UNION SELECT` para fabricar datos, y fuga de información por mensaje de error— y las cinco
+comparten la misma causa raíz: la aplicación nunca separó *código* de *dato*. La solución no estaba en la
+base de datos ni en el framework, sino en **cómo se construye la consulta**: al parametrizar, la entrada
+del usuario deja de interpretarse como código, los cinco ataques quedan neutralizados, y como efecto
+colateral ya no hay errores de sintaxis que filtrar — todo sin romper el login real.
+
+> 🔒 **Siguiente paso recomendado:** guardar las contraseñas con *hash* (por ejemplo `bcrypt`) en lugar de
+> texto plano. La parametrización cierra la inyección; el hash protege las credenciales aunque la base
+> llegara a filtrarse por otra vía.
 
 ---
 

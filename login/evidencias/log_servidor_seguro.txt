@@ -1,9 +1,0 @@
-http://localhost:3001
-Query preparada: SELECT * FROM users WHERE username = ? AND password = ?
-Parametros     : [ 'admin', 'admin' ]
-Query preparada: SELECT * FROM users WHERE username = ? AND password = ?
-Parametros     : [ 'juan', '1234' ]
-Query preparada: SELECT * FROM users WHERE username = ? AND password = ?
-Parametros     : [ "admin' --", 'loquesea' ]
-Query preparada: SELECT * FROM users WHERE username = ? AND password = ?
-Parametros     : [ "' OR '1'='1' --", 'loquesea' ]
